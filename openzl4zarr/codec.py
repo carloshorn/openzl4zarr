@@ -5,19 +5,17 @@ import asyncio
 import pathlib
 import warnings
 from dataclasses import dataclass
-from functools import cached_property
 from typing import TYPE_CHECKING
 
 import openzl.ext as zl
 from zarr.abc.codec import BytesBytesCodec
-from zarr.core.buffer.cpu import Buffer as CpuBuffer
-from zarr.core.common import JSON, parse_named_configuration
-from zarr.registry import register_codec
+from zarr.core.common import parse_named_configuration
 
 if TYPE_CHECKING:
     from typing import Self, Optional
     from zarr.core.array_spec import ArraySpec
     from zarr.core.buffer import Buffer
+    from zarr.core.common import JSON
 
 
 OPENZL_VERSION = (zl.LIBRARY_VERSION_MAJOR, zl.LIBRARY_VERSION_MINOR, zl.LIBRARY_VERSION_PATCH)
@@ -58,6 +56,10 @@ class OpenZLCodec(BytesBytesCodec):
         version = tuple(map(int, configuration_parsed["version"].split(".")))
         if version > OPENZL_VERSION:
             warnings.warn("The data were compressed using a newer version of OpenZL!", RuntimeWarning)
+        max_format_version = configuration_parsed["max_format_version"]
+        min_format_version = configuration_parsed["min_format_version"]
+        if zl.MAX_FORMAT_VERSION < min_format_version or zl.MIN_FORMAT_VERSION > max_format_version:
+            warnings.warn("Format incompatibility expected!", RuntimeWarning)
         return cls()
 
     @classmethod
@@ -74,7 +76,13 @@ class OpenZLCodec(BytesBytesCodec):
 
     def to_dict(self) -> dict[str, JSON]:
         version = ".".join(map(str, OPENZL_VERSION))
-        return {"name": self.name, "configuration": {"version": version}}
+        FORMAT_VERSION = (zl.MAX_FORMAT_VERSION, zl.MIN_FORMAT_VERSION)
+        config = {
+            "version": version,
+            "max_format_version": zl.MAX_FORMAT_VERSION,
+            "min_format_version": zl.MIN_FORMAT_VERSION
+        }
+        return {"name": self.name, "configuration": config}
 
     def _decode_sync(self, chunk_bytes: Buffer, chunk_spec: ArraySpec) -> Buffer:
         """decompress a single chunk"""
