@@ -20,40 +20,19 @@ if TYPE_CHECKING:
 
 OPENZL_VERSION = (zl.LIBRARY_VERSION_MAJOR, zl.LIBRARY_VERSION_MINOR, zl.LIBRARY_VERSION_PATCH)
 
-def build_compressor(chunk_spec: ArraySpec):
-    """build a generic compressor for the incoming data"""
-    compressor = zl.Compressor()
-    endianness = getattr(chunk_spec.dtype, "endianness", None)
-    if endianness == "little":
-        endianness = "LE"
-    elif endianness == "big":
-        endianness = "BE"
-    else:
-        endianness = ""
-    itemsize = chunk_spec.dtype.item_size * 8
-    node = getattr(zl.nodes, f"ConvertSerialToNum{endianness}{itemsize}", None)
-    if node is None:
-        graph = zl.graphs.Compress()(compressor)
-    else:
-        graph = node()(compressor, successor=zl.graphs.Compress())
-    compressor.select_starting_graph(graph)    
-    return compressor
-
-
 @dataclass(frozen=True)
 class OpenZLCodec(BytesBytesCodec):
     """OpenZL codec"""
 
     is_fixed_size = False
-    name = "openzl"
+    name = "openzl4zarr.openzl"
 
     compressor: Optional[zl.Compressor] = None
-    compressor_factory: Callable[[ArraySpec], zl.Compressor] = build_compressor
 
     @classmethod
     def from_dict(cls, data: dict[str, JSON]) -> Self:
         _, configuration_parsed = parse_named_configuration(data, cls.name)
-        version = tuple(map(int, configuration_parsed["version"].split(".")))
+        version = tuple(map(int, configuration_parsed["openzl_version"].split(".")))
         if version > OPENZL_VERSION:
             warnings.warn("The data were compressed using a newer version of OpenZL!", RuntimeWarning)
         max_format_version = configuration_parsed["max_format_version"]
@@ -78,7 +57,7 @@ class OpenZLCodec(BytesBytesCodec):
         version = ".".join(map(str, OPENZL_VERSION))
         FORMAT_VERSION = (zl.MAX_FORMAT_VERSION, zl.MIN_FORMAT_VERSION)
         config = {
-            "version": version,
+            "openzl_version": version,
             "max_format_version": zl.MAX_FORMAT_VERSION,
             "min_format_version": zl.MIN_FORMAT_VERSION
         }
@@ -100,10 +79,8 @@ class OpenZLCodec(BytesBytesCodec):
 
     def _encode_sync(self, chunk_data: Buffer, chunk_spec: ArraySpec) -> Buffer:
         if self.compressor is None:
-            warnings.warn("Using an unoptimized default compressor!", RuntimeWarning)
-            compressor = self.compressor_factory(chunk_spec)
-        else:
-            compressor = self.compressor
+            raise RuntimeError("Need a compressor!")
+        compressor = self.compressor
         cctx = zl.CCtx()
         cctx.ref_compressor(compressor)
         cctx.set_parameter(zl.CParam.FormatVersion, zl.MAX_FORMAT_VERSION)

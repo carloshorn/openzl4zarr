@@ -23,5 +23,15 @@ classifiers = [
     "Programming Language :: Python"
 ]
 
+[project.optional-dependencies]
+example = [
+  "matplotlib",
+  "numpy",
+  "h5netcdf",
+  "scipy",
+  "s3fs",
+  "scikit-learn"
+]
+
 [project.urls]
 homepage = "https://github.com/carloshorn/openzl4zarr"
