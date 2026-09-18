@@ -1,10 +1,13 @@
 """Module containing the OpenZLShardingCodec."""
-from openzl4zarr import OpenZLCodec
+
+from dataclasses import field
+
 import openzl.ext as zl
 import zarr
 from zarr.codecs.sharding import *
 
-from dataclasses import field
+from .codec import OpenZLCodec
+from .exceptions import FormatVersionError
 
 if TYPE_CHECKING or True:
     from collections.abc import Iterator, Mapping
@@ -20,24 +23,54 @@ class OpenZLShardingCodec(zarr.codecs.ShardingCodec):
 
     `codec_mapping` maps chunk coordinate to OpenZLCodec instances.
     """
+
     codec_mapping: Mapping[tuple[int, ...], OpenZLCodec] = field(default_factory=dict)
 
     def __init__(
         self,
         *,
         chunk_shape: ShapeLike,
+        codecs: Iterable[Codec | dict[str, JSON]] = (
+            BytesCodec(),
+            OpenZLCodec(format_version=zl.MAX_FORMAT_VERSION),
+        ),
         index_codecs: Iterable[Codec | dict[str, JSON]] = (BytesCodec(), Crc32cCodec()),
         index_location: ShardingCodecIndexLocation | str = "end",
         subchunk_write_order: SubchunkWriteOrder = "morton",
-        codec_mapping: Optional[Mapping[tuple[int, ...], OpenZLCodec]] = None
+        codec_mapping: Optional[Mapping[tuple[int, ...], OpenZLCodec]] = None,
     ) -> None:
-        codecs = (BytesCodec(), OpenZLCodec())
-        super().__init__(
-            chunk_shape=chunk_shape, codecs=codecs, index_codecs=index_codecs, 
-            index_location=index_location, subchunk_write_order=subchunk_write_order
-        )
         if codec_mapping is None:
             codec_mapping = dict()
+        else:
+            format_version = (
+                max(
+                    (codec.format_version for codec in codec_mapping.values()),
+                    default=0,
+                )
+                or zl.MAX_FORMAT_VERSION
+            )
+            codecs = codecs[:-1] + (OpenZLCodec(format_version=format_version),)
+        super().__init__(
+            chunk_shape=chunk_shape,
+            codecs=codecs,
+            index_codecs=index_codecs,
+            index_location=index_location,
+            subchunk_write_order=subchunk_write_order,
+        )
+        object.__setattr__(self, "codec_mapping", codec_mapping)
+        if not isinstance(self.codecs[-1], OpenZLCodec):
+            raise ValueError(f"Inner codecs do not end with {OpenZLCodec}!")
+
+    def set_codec_mapping(
+        self, codec_mapping: Mapping[tuple[int, ...], OpenZLCodec]
+    ) -> None:
+        format_version = max(
+            (codec.format_version for codec in codec_mapping.values()), default=0
+        )
+        if self.codecs[-1].format_version < format_version:
+            raise FormatVersionError(
+                "Compressors have a greater format version than the array metadata!"
+            )
         object.__setattr__(self, "codec_mapping", codec_mapping)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -96,7 +129,9 @@ class OpenZLShardingCodec(zarr.codecs.ShardingCodec):
 
         for chunk_coords, _chunk_selection, out_selection, _ in indexer:
             # None = chunk normalized to missing (see encode_or_elide_chunk)
-            inner_transform = self._get_located_inner_chunk_transform(shard_spec, chunk_coords)
+            inner_transform = self._get_located_inner_chunk_transform(
+                shard_spec, chunk_coords
+            )
             shard_builder[chunk_coords] = encode_or_elide_chunk(
                 shard_array[out_selection], chunk_spec, inner_transform.encode_chunk
             )

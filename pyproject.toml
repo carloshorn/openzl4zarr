@@ -23,6 +23,9 @@ classifiers = [
     "Programming Language :: Python"
 ]
 
+[project.entry-points."zarr.codecs"]
+"openzl4zarr.openzl" = "openzl4zarr:OpenZLCodec"
+
 [project.optional-dependencies]
 example = [
   "matplotlib",
